@@ -60,6 +60,13 @@ DAY2：PHASE2.5（ログイン）→ PHASE3（デプロイ）→ PHASE4（オリ
 **PHASE4（オリジナル機能）**
 `.steering/phase4-ai-feature/` 作成 → `product-requirements.md` の差別化要素を実装 → GitHub push → Vercel 自動反映を確認。
 
+## トークン節約
+
+- 画面右下のトークン使用率が **80%** を超えたら `/compact` を実行する
+- フェーズが切り替わるタイミングで新しいセッションを始めると効率がよい
+- `node_modules/` `.next/` `.git/` は読まなくてよい
+- `/compact` 時は「変更したファイル一覧・現在のフェーズ・次にやること」を必ず要約に残すこと
+
 ## セキュリティ
 
 - `.env.local` は絶対にGitHubにアップしない
