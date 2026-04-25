@@ -104,6 +104,7 @@ export default function Home() {
   const router = useRouter();
   const [authUser, setAuthUser]   = useState<User | null>(null);
   const [profile, setProfile]     = useState<Profile | null>(null);
+  const [isAdmin, setIsAdmin]     = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   const [tasks, setTasks]       = useState<Task[]>([]);
@@ -163,6 +164,7 @@ export default function Home() {
     const { data } = await supabase.from("profiles").select("*").eq("id", userId).single();
 
     if (data) {
+      if (data.is_admin) setIsAdmin(true);
       if (!data.color || data.color === "#3b82f6") {
         const color = getColorForId(userId);
         await supabase.from("profiles").update({ color }).eq("id", userId);
@@ -342,7 +344,7 @@ export default function Home() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-gray-800">タスク管理</h1>
         <div className="flex items-center gap-3">
-          {profile?.is_admin && (
+          {isAdmin && (
             <Link href="/admin" className="text-sm text-red-500 hover:underline">管理</Link>
           )}
           <Link href="/settings" className={`text-sm ${C.link}`}>設定</Link>
