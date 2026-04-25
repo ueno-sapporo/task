@@ -14,10 +14,32 @@ type ProfileRow = {
   created_at: string;
 };
 
+type Template = {
+  id: string;
+  name: string;
+  title: string;
+  detail: string | null;
+  relative_due_days: number;
+  visibility: "personal" | "team";
+  created_by: string;
+};
+
 export default function AdminPage() {
   const router = useRouter();
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState("");
+
+  // テンプレートフォーム
+  const [tmplName, setTmplName]       = useState("");
+  const [tmplTitle, setTmplTitle]     = useState("");
+  const [tmplDetail, setTmplDetail]   = useState("");
+  const [tmplDays, setTmplDays]       = useState(1);
+  const [tmplVisibility, setTmplVisibility] = useState<"personal" | "team">("team");
+  const [tmplSaving, setTmplSaving]   = useState(false);
+
+  const [activeTab, setActiveTab] = useState<"users" | "templates">("users");
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -28,10 +50,15 @@ export default function AdminPage() {
 
       if (!me?.is_admin) { router.replace("/"); return; }
 
-      const { data } = await supabase
-        .from("profiles").select("*").order("created_at", { ascending: false });
+      setCurrentUserId(session.user.id);
 
-      setProfiles(data ?? []);
+      const [{ data: profilesData }, { data: templatesData }] = await Promise.all([
+        supabase.from("profiles").select("*").order("created_at", { ascending: false }),
+        supabase.from("templates").select("*").order("created_at", { ascending: true }),
+      ]);
+
+      setProfiles(profilesData ?? []);
+      setTemplates(templatesData ?? []);
       setIsLoading(false);
     });
   }, [router]);
@@ -44,6 +71,31 @@ export default function AdminPage() {
   async function handleReject(id: string) {
     await supabase.from("profiles").update({ status: "rejected" }).eq("id", id);
     setProfiles((prev) => prev.map((p) => p.id === id ? { ...p, status: "rejected" } : p));
+  }
+
+  async function handleAddTemplate() {
+    if (!tmplName.trim() || !tmplTitle.trim()) return;
+    setTmplSaving(true);
+
+    const { data, error } = await supabase.from("templates").insert({
+      created_by: currentUserId,
+      name: tmplName.trim(),
+      title: tmplTitle.trim(),
+      detail: tmplDetail.trim(),
+      relative_due_days: tmplDays,
+      visibility: tmplVisibility,
+    }).select().single();
+
+    if (!error && data) {
+      setTemplates([...templates, data]);
+      setTmplName(""); setTmplTitle(""); setTmplDetail(""); setTmplDays(1); setTmplVisibility("team");
+    }
+    setTmplSaving(false);
+  }
+
+  async function handleDeleteTemplate(id: string) {
+    await supabase.from("templates").delete().eq("id", id);
+    setTemplates(templates.filter((t) => t.id !== id));
   }
 
   if (isLoading) {
@@ -62,85 +114,181 @@ export default function AdminPage() {
     <div className="max-w-2xl mx-auto px-4 py-8">
       <div className="flex items-center gap-3 mb-6">
         <Link href="/" className="text-gray-400 hover:text-gray-600 text-sm">← 戻る</Link>
-        <h1 className="text-2xl font-bold text-gray-800">ユーザー管理</h1>
+        <h1 className="text-2xl font-bold text-gray-800">管理画面</h1>
       </div>
 
-      {/* 承認待ち */}
-      <div className="mb-6">
-        <h2 className="text-sm font-bold text-gray-700 mb-3">
-          承認待ち
-          {pending.length > 0 && (
-            <span className="ml-2 text-red-500">({pending.length}件)</span>
-          )}
-        </h2>
-        {pending.length === 0 ? (
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <p className="text-gray-400 text-sm">承認待ちのユーザーはいません</p>
+      {/* タブ */}
+      <div className="flex gap-2 mb-6">
+        <button onClick={() => setActiveTab("users")}
+          className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${activeTab === "users" ? "bg-gray-800 text-white" : "bg-white border border-gray-200 text-gray-500"}`}>
+          👤 ユーザー管理
+          {pending.length > 0 && <span className="ml-1 text-red-400">({pending.length})</span>}
+        </button>
+        <button onClick={() => setActiveTab("templates")}
+          className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${activeTab === "templates" ? "bg-gray-800 text-white" : "bg-white border border-gray-200 text-gray-500"}`}>
+          📄 テンプレート管理
+        </button>
+      </div>
+
+      {/* ユーザー管理タブ */}
+      {activeTab === "users" && (
+        <>
+          {/* 承認待ち */}
+          <div className="mb-6">
+            <h2 className="text-sm font-bold text-gray-700 mb-3">
+              承認待ち {pending.length > 0 && <span className="text-red-500">({pending.length}件)</span>}
+            </h2>
+            {pending.length === 0 ? (
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <p className="text-gray-400 text-sm">承認待ちのユーザーはいません</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {pending.map((p) => (
+                  <div key={p.id} className="bg-white rounded-xl border border-orange-200 p-4 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-800 truncate">{p.email ?? "（メール未設定）"}</p>
+                      <p className="text-xs text-gray-400">{p.display_name ?? "表示名未設定"}</p>
+                    </div>
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button onClick={() => handleApprove(p.id)}
+                        className="text-xs bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg font-semibold transition-colors">
+                        承認
+                      </button>
+                      <button onClick={() => handleReject(p.id)}
+                        className="text-xs bg-red-400 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg font-semibold transition-colors">
+                        却下
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="space-y-2">
-            {pending.map((p) => (
-              <div key={p.id} className="bg-white rounded-xl border border-orange-200 p-4 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-gray-800 truncate">{p.email ?? "（メール未設定）"}</p>
-                  <p className="text-xs text-gray-400">{p.display_name ?? "表示名未設定"}</p>
-                </div>
-                <div className="flex gap-2 flex-shrink-0">
-                  <button onClick={() => handleApprove(p.id)}
-                    className="text-xs bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg font-semibold transition-colors">
-                    承認
-                  </button>
+
+          {/* 承認済み */}
+          <div className="mb-6">
+            <h2 className="text-sm font-bold text-gray-700 mb-3">承認済み ({approved.length}件)</h2>
+            <div className="space-y-2">
+              {approved.map((p) => (
+                <div key={p.id} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-800 truncate">
+                      {p.email ?? "（メール未設定）"}
+                      {p.is_admin && <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">管理者</span>}
+                    </p>
+                    <p className="text-xs text-gray-400">{p.display_name ?? "表示名未設定"}</p>
+                  </div>
                   <button onClick={() => handleReject(p.id)}
-                    className="text-xs bg-red-400 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg font-semibold transition-colors">
-                    却下
+                    className="text-xs text-gray-400 hover:text-red-500 transition-colors flex-shrink-0">
+                    取消
                   </button>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        )}
-      </div>
 
-      {/* 承認済み */}
-      <div className="mb-6">
-        <h2 className="text-sm font-bold text-gray-700 mb-3">承認済み ({approved.length}件)</h2>
-        <div className="space-y-2">
-          {approved.map((p) => (
-            <div key={p.id} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-gray-800 truncate">
-                  {p.email ?? "（メール未設定）"}
-                  {p.is_admin && (
-                    <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">管理者</span>
-                  )}
-                </p>
-                <p className="text-xs text-gray-400">{p.display_name ?? "表示名未設定"}</p>
+          {/* 却下済み */}
+          {rejected.length > 0 && (
+            <div>
+              <h2 className="text-sm font-bold text-gray-700 mb-3">却下済み ({rejected.length}件)</h2>
+              <div className="space-y-2">
+                {rejected.map((p) => (
+                  <div key={p.id} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between gap-3 opacity-60">
+                    <p className="text-sm text-gray-600 truncate">{p.email ?? "（メール未設定）"}</p>
+                    <button onClick={() => handleApprove(p.id)}
+                      className="text-xs text-gray-500 hover:text-green-600 transition-colors flex-shrink-0">
+                      承認に変更
+                    </button>
+                  </div>
+                ))}
               </div>
-              <button onClick={() => handleReject(p.id)}
-                className="text-xs text-gray-400 hover:text-red-500 transition-colors flex-shrink-0">
-                取消
+            </div>
+          )}
+        </>
+      )}
+
+      {/* テンプレート管理タブ */}
+      {activeTab === "templates" && (
+        <>
+          {/* 新規作成フォーム */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+            <h2 className="text-sm font-bold text-gray-700 mb-4">新しいテンプレートを作成</h2>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">テンプレート名</label>
+                <input type="text" value={tmplName} onChange={(e) => setTmplName(e.target.value)}
+                  placeholder="例：週次レポート"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">タスクのタイトル</label>
+                <input type="text" value={tmplTitle} onChange={(e) => setTmplTitle(e.target.value)}
+                  placeholder="例：週次レポート作成・提出"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">詳細・メモ（任意）</label>
+                <textarea value={tmplDetail} onChange={(e) => setTmplDetail(e.target.value)}
+                  placeholder="例：先週の業務をまとめて提出する"
+                  rows={2} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-gray-400" />
+              </div>
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="text-xs text-gray-500 block mb-1">期日（起票日から何日後）</label>
+                  <input type="number" min={0} max={365} value={tmplDays} onChange={(e) => setTmplDays(Number(e.target.value))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400" />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs text-gray-500 block mb-1">公開範囲</label>
+                  <div className="flex gap-1">
+                    <button type="button" onClick={() => setTmplVisibility("team")}
+                      className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-colors ${tmplVisibility === "team" ? "bg-gray-800 text-white border-gray-800" : "border-gray-300 text-gray-500"}`}>
+                      👥 チーム
+                    </button>
+                    <button type="button" onClick={() => setTmplVisibility("personal")}
+                      className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-colors ${tmplVisibility === "personal" ? "bg-gray-800 text-white border-gray-800" : "border-gray-300 text-gray-500"}`}>
+                      👤 個人
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <button onClick={handleAddTemplate} disabled={tmplSaving || !tmplName.trim() || !tmplTitle.trim()}
+                className="w-full bg-gray-800 hover:bg-gray-900 text-white text-sm font-semibold py-2 rounded-lg transition-colors disabled:opacity-50">
+                {tmplSaving ? "保存中..." : "＋ テンプレートを追加"}
               </button>
             </div>
-          ))}
-        </div>
-      </div>
-
-      {/* 却下済み */}
-      {rejected.length > 0 && (
-        <div>
-          <h2 className="text-sm font-bold text-gray-700 mb-3">却下済み ({rejected.length}件)</h2>
-          <div className="space-y-2">
-            {rejected.map((p) => (
-              <div key={p.id} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between gap-3 opacity-60">
-                <p className="text-sm text-gray-600 truncate">{p.email ?? "（メール未設定）"}</p>
-                <button onClick={() => handleApprove(p.id)}
-                  className="text-xs text-gray-500 hover:text-green-600 transition-colors flex-shrink-0">
-                  承認に変更
-                </button>
-              </div>
-            ))}
           </div>
-        </div>
+
+          {/* テンプレート一覧 */}
+          <div>
+            <h2 className="text-sm font-bold text-gray-700 mb-3">テンプレート一覧 ({templates.length}件)</h2>
+            {templates.length === 0 ? (
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <p className="text-gray-400 text-sm">まだテンプレートがありません</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {templates.map((t) => (
+                  <div key={t.id} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <p className="text-sm font-semibold text-gray-800">{t.name}</p>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${t.visibility === "team" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                          {t.visibility === "team" ? "👥 チーム" : "👤 個人"}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 truncate">{t.title}</p>
+                      <p className="text-xs text-gray-400">{t.relative_due_days}日後</p>
+                    </div>
+                    <button onClick={() => handleDeleteTemplate(t.id)}
+                      className="text-gray-400 hover:text-red-500 text-lg leading-none transition-colors flex-shrink-0">×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

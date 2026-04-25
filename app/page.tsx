@@ -15,6 +15,7 @@ type Task = {
   due_date: string;
   remind_at: string;
   recurrence: "none" | "daily" | "weekly" | "monthly";
+  visibility: "personal" | "team";
   userId: string;
   userName: string;
   userColor: string;
@@ -33,27 +34,21 @@ type Template = {
   id: string;
   name: string;
   title: string;
-  detail: string;
-  relativeDueDays: number;
-  isPublic: boolean;
+  detail: string | null;
+  relative_due_days: number;
+  visibility: "personal" | "team";
+  created_by: string;
 };
 
 type ViewMode = "today" | "week" | "month";
 
-// ===== アバターカラー（ユーザーIDから自動割り当て） =====
+// ===== アバターカラー =====
 const AVATAR_COLORS = ["#ec4899", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444", "#06b6d4"];
 function getColorForId(id: string): string {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = id.charCodeAt(i) + ((h << 5) - h);
   return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
 }
-
-// ===== テンプレートデータ =====
-const defaultTemplates: Template[] = [
-  { id: "t1", name: "週次レポート",     title: "週次レポート作成・提出",        detail: "先週の業務内容をまとめてレポートを提出する", relativeDueDays: 7, isPublic: true },
-  { id: "t2", name: "新入社員受け入れ", title: "新入社員受け入れ準備",          detail: "・入館証手配\n・PC準備\n・座席確保\n・歓迎メール送信", relativeDueDays: 3, isPublic: true },
-  { id: "t3", name: "定例会議準備",     title: "定例会議 アジェンダ作成・共有", detail: "アジェンダを作成して前日までに参加者へ共有する", relativeDueDays: 1, isPublic: false },
-];
 
 // ===== ヘルパー関数 =====
 function isOverdue(due_date: string, completed: boolean) {
@@ -107,30 +102,36 @@ export default function Home() {
   const [isAdmin, setIsAdmin]     = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  const [tasks, setTasks]       = useState<Task[]>([]);
-  const [templates]             = useState<Template[]>(defaultTemplates);
+  const [tasks, setTasks]         = useState<Task[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
 
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [title, setTitle]           = useState("");
-  const [detail, setDetail]         = useState("");
-  const [dueDate, setDueDate]       = useState("");
-  const [remindAt, setRemindAt]     = useState("");
-  const [recurrence, setRecurrence] = useState<Task["recurrence"]>("none");
+  const [isFormOpen, setIsFormOpen]     = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [title, setTitle]               = useState("");
+  const [detail, setDetail]             = useState("");
+  const [dueDate, setDueDate]           = useState("");
+  const [remindAt, setRemindAt]         = useState("");
+  const [recurrence, setRecurrence]     = useState<Task["recurrence"]>("none");
+  const [visibility, setVisibility]     = useState<"personal" | "team">("team");
 
-  const [viewMode, setViewMode]           = useState<ViewMode>("week");
-  const [isAllUsersView, setIsAllUsersView] = useState(false);
+  const [viewMode, setViewMode]               = useState<ViewMode>("week");
+  const [isAllUsersView, setIsAllUsersView]   = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
-  const [showSummary, setShowSummary]     = useState(false);
+  const [showSummary, setShowSummary]         = useState(false);
 
   // ===== Supabaseからタスクを取得 =====
   const loadTasks = useCallback(async (showAll: boolean, userId: string) => {
     let query = supabase.from("tasks").select("*").order("created_at", { ascending: false });
-    if (!showAll) query = query.eq("user_id", userId);
+    if (showAll) {
+      // 全体表示：チームタスク＋自分の個人タスク
+      query = query.or(`visibility.eq.team,user_id.eq.${userId}`);
+    } else {
+      query = query.eq("user_id", userId);
+    }
 
     const { data: tasksData } = await query;
     if (!tasksData) return;
 
-    // タスクに関わるユーザーのプロフィールをまとめて取得
     const ids = Array.from(new Set(tasksData.map((t) => t.user_id)));
     const { data: profilesData } = await supabase
       .from("profiles").select("id, display_name, color").in("id", ids);
@@ -152,11 +153,19 @@ export default function Home() {
         due_date:   t.due_date ?? "",
         remind_at:  t.remind_at ?? "",
         recurrence: t.recurrence ?? "none",
+        visibility: (t.visibility ?? "team") as "personal" | "team",
         userId:     t.user_id,
         userName:   profilesMap[t.user_id]?.name  ?? "名前未設定",
         userColor:  profilesMap[t.user_id]?.color ?? getColorForId(t.user_id),
       }))
     );
+  }, []);
+
+  // ===== Supabaseからテンプレートを取得 =====
+  const loadTemplates = useCallback(async () => {
+    const { data } = await supabase
+      .from("templates").select("*").order("created_at", { ascending: true });
+    setTemplates(data ?? []);
   }, []);
 
   // ===== Supabaseからプロフィールを取得・作成 =====
@@ -173,7 +182,6 @@ export default function Home() {
         setProfile(data);
       }
     } else {
-      // トリガーが失敗した場合の保険
       const color = getColorForId(userId);
       await supabase.from("profiles").insert({ id: userId, color });
       setProfile({ id: userId, display_name: null, color, alert_email: null, status: "pending", is_admin: false });
@@ -185,57 +193,85 @@ export default function Home() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) { router.replace("/auth"); return; }
       setAuthUser(session.user);
-      Promise.all([loadProfile(session.user.id), loadTasks(false, session.user.id)])
-        .finally(() => setIsLoading(false));
+      Promise.all([
+        loadProfile(session.user.id),
+        loadTasks(false, session.user.id),
+        loadTemplates(),
+      ]).finally(() => setIsLoading(false));
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
       if (!session) router.replace("/auth");
     });
     return () => subscription.unsubscribe();
-  }, [router, loadProfile, loadTasks]);
+  }, [router, loadProfile, loadTasks, loadTemplates]);
 
-  // 全体/個人 切り替えでタスクを再取得
   useEffect(() => {
     if (!authUser) return;
     loadTasks(isAllUsersView, authUser.id);
   }, [isAllUsersView, authUser, loadTasks]);
 
-  // ===== タスク操作（Supabase） =====
+  // ===== フォームリセット =====
+  function resetForm() {
+    setTitle(""); setDetail(""); setDueDate(""); setRemindAt("");
+    setRecurrence("none"); setVisibility("team");
+    setEditingTaskId(null); setIsFormOpen(false);
+  }
+
+  // ===== タスク操作 =====
   async function addTask() {
     if (!title.trim() || !dueDate || !authUser) return;
 
     const { data, error } = await supabase
       .from("tasks")
       .insert({
-        user_id:    authUser.id,
-        title:      title.trim(),
-        detail:     detail.trim(),
-        completed:  false,
-        due_date:   dueDate || null,
-        remind_at:  remindAt || null,
-        recurrence,
+        user_id: authUser.id, title: title.trim(), detail: detail.trim(),
+        completed: false, due_date: dueDate || null, remind_at: remindAt || null,
+        recurrence, visibility,
       })
-      .select()
-      .single();
+      .select().single();
 
     if (!error && data) {
       setTasks([{
-        id:         data.id,
-        title:      data.title,
-        detail:     data.detail ?? "",
-        completed:  data.completed,
-        due_date:   data.due_date ?? "",
-        remind_at:  data.remind_at ?? "",
-        recurrence: data.recurrence ?? "none",
-        userId:     data.user_id,
-        userName:   profile?.display_name ?? "自分",
-        userColor:  profile?.color ?? getColorForId(authUser.id),
+        id: data.id, title: data.title, detail: data.detail ?? "",
+        completed: data.completed, due_date: data.due_date ?? "",
+        remind_at: data.remind_at ?? "", recurrence: data.recurrence ?? "none",
+        visibility: data.visibility ?? "team",
+        userId: data.user_id,
+        userName: profile?.display_name ?? "自分",
+        userColor: profile?.color ?? getColorForId(authUser.id),
       }, ...tasks]);
     }
+    resetForm();
+  }
 
-    setTitle(""); setDetail(""); setDueDate(""); setRemindAt(""); setRecurrence("none");
-    setIsFormOpen(false);
+  async function updateTask() {
+    if (!title.trim() || !editingTaskId) return;
+
+    const { error } = await supabase.from("tasks").update({
+      title: title.trim(), detail: detail.trim(),
+      due_date: dueDate || null, remind_at: remindAt || null,
+      recurrence, visibility,
+    }).eq("id", editingTaskId);
+
+    if (!error) {
+      setTasks(tasks.map((t) => t.id === editingTaskId
+        ? { ...t, title: title.trim(), detail: detail.trim(), due_date: dueDate, remind_at: remindAt, recurrence, visibility }
+        : t
+      ));
+    }
+    resetForm();
+  }
+
+  function startEdit(task: Task) {
+    setTitle(task.title);
+    setDetail(task.detail);
+    setDueDate(task.due_date ? task.due_date.slice(0, 16) : "");
+    setRemindAt(task.remind_at ? task.remind_at.slice(0, 16) : "");
+    setRecurrence(task.recurrence);
+    setVisibility(task.visibility);
+    setEditingTaskId(task.id);
+    setIsFormOpen(true);
   }
 
   async function toggleTask(id: string) {
@@ -257,8 +293,9 @@ export default function Home() {
 
   function applyTemplate(template: Template) {
     setTitle(template.title);
-    setDetail(template.detail);
-    setDueDate(addDays(template.relativeDueDays));
+    setDetail(template.detail ?? "");
+    setDueDate(addDays(template.relative_due_days));
+    setVisibility(template.visibility);
     setShowTemplateModal(false);
   }
 
@@ -279,9 +316,7 @@ export default function Home() {
           <div className="text-5xl mb-4">⏳</div>
           <h2 className="text-lg font-bold text-gray-800 mb-2">承認待ちです</h2>
           <p className="text-sm text-gray-500 mb-6">管理者があなたのアカウントを確認中です。<br />承認されるまでしばらくお待ちください。</p>
-          <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-600 underline">
-            ログアウト
-          </button>
+          <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-600 underline">ログアウト</button>
         </div>
       </div>
     );
@@ -295,9 +330,7 @@ export default function Home() {
           <div className="text-5xl mb-4">🚫</div>
           <h2 className="text-lg font-bold text-gray-800 mb-2">アクセスが承認されませんでした</h2>
           <p className="text-sm text-gray-500 mb-6">管理者にお問い合わせください。</p>
-          <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-600 underline">
-            ログアウト
-          </button>
+          <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-600 underline">ログアウト</button>
         </div>
       </div>
     );
@@ -430,7 +463,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* タスク追加ボタン（折り畳み時） */}
+      {/* タスク追加ボタン */}
       {!isFormOpen && (
         <button onClick={() => setIsFormOpen(true)}
           className="w-full flex items-center justify-center gap-2 py-3 mb-4 border-2 border-dashed rounded-xl text-sm font-medium transition-colors border-[var(--primary-border)] text-[var(--primary-text-muted)] hover:bg-[var(--primary-light)]">
@@ -438,26 +471,33 @@ export default function Home() {
         </button>
       )}
 
-      {/* タスク追加フォーム（展開時） */}
+      {/* タスク追加/編集フォーム */}
       {isFormOpen && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-4">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-semibold text-gray-600">新しいタスクを追加</p>
+            <p className="text-sm font-semibold text-gray-600">
+              {editingTaskId ? "タスクを編集" : "新しいタスクを追加"}
+            </p>
             <div className="flex items-center gap-2">
-              <button onClick={() => setShowTemplateModal(true)}
-                className={`text-xs border rounded-lg px-3 py-1 transition-colors ${C.btnOutline}`}>
-                📄 テンプレート
-              </button>
-              <button onClick={() => setIsFormOpen(false)} className="text-xs text-gray-400 hover:text-gray-600">
+              {!editingTaskId && (
+                <button onClick={() => setShowTemplateModal(true)}
+                  className={`text-xs border rounded-lg px-3 py-1 transition-colors ${C.btnOutline}`}>
+                  📄 テンプレート
+                </button>
+              )}
+              <button onClick={resetForm} className="text-xs text-gray-400 hover:text-gray-600">
                 キャンセル
               </button>
             </div>
           </div>
+
           <input type="text" placeholder="タスクの内容を入力..." value={title}
-            onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addTask()}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !editingTaskId && addTask()}
             className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2 ${C.focusRing}`} autoFocus />
           <textarea placeholder="詳細・メモ（任意）" value={detail} onChange={(e) => setDetail(e.target.value)}
             rows={2} className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2 resize-none ${C.focusRing}`} />
+
           <div className="flex gap-2 mb-2">
             <div className="flex-1">
               <label className="text-xs text-gray-500 mb-1 block">期限日時</label>
@@ -470,18 +510,36 @@ export default function Home() {
                 className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm ${C.focusRing}`} />
             </div>
           </div>
-          <div className="mb-3">
-            <label className="text-xs text-gray-500 mb-1 block">🔄 繰り返し設定</label>
-            <select value={recurrence} onChange={(e) => setRecurrence(e.target.value as Task["recurrence"])}
-              className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm ${C.focusRing}`}>
-              <option value="none">繰り返しなし</option>
-              <option value="daily">毎日</option>
-              <option value="weekly">毎週</option>
-              <option value="monthly">毎月</option>
-            </select>
+
+          <div className="flex gap-2 mb-3">
+            <div className="flex-1">
+              <label className="text-xs text-gray-500 mb-1 block">🔄 繰り返し</label>
+              <select value={recurrence} onChange={(e) => setRecurrence(e.target.value as Task["recurrence"])}
+                className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm ${C.focusRing}`}>
+                <option value="none">繰り返しなし</option>
+                <option value="daily">毎日</option>
+                <option value="weekly">毎週</option>
+                <option value="monthly">毎月</option>
+              </select>
+            </div>
+            <div className="flex-1">
+              <label className="text-xs text-gray-500 mb-1 block">🔒 公開範囲</label>
+              <div className="flex gap-1">
+                <button type="button" onClick={() => setVisibility("team")}
+                  className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-colors ${visibility === "team" ? C.btn : "border-gray-300 text-gray-500 hover:bg-gray-50"}`}>
+                  👥 チーム
+                </button>
+                <button type="button" onClick={() => setVisibility("personal")}
+                  className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-colors ${visibility === "personal" ? "bg-gray-700 text-white border-gray-700" : "border-gray-300 text-gray-500 hover:bg-gray-50"}`}>
+                  👤 個人
+                </button>
+              </div>
+            </div>
           </div>
-          <button onClick={addTask} className={`w-full text-sm font-semibold py-2 rounded-lg transition-colors ${C.btn}`}>
-            ＋ 追加する
+
+          <button onClick={editingTaskId ? updateTask : addTask}
+            className={`w-full text-sm font-semibold py-2 rounded-lg transition-colors ${C.btn}`}>
+            {editingTaskId ? "更新する" : "＋ 追加する"}
           </button>
         </div>
       )}
@@ -505,6 +563,7 @@ export default function Home() {
         )}
         {filteredTasks.map((task) => {
           const overdue = isOverdue(task.due_date, task.completed);
+          const canEdit = task.userId === authUser.id;
           return (
             <div key={task.id}
               className={`bg-white rounded-xl shadow-sm border px-4 py-3 flex items-start gap-3 ${overdue ? "border-red-300 bg-red-50" : "border-gray-200"} ${task.completed ? "opacity-50" : ""}`}>
@@ -524,6 +583,9 @@ export default function Home() {
                   <p className={`text-sm font-medium text-gray-800 ${task.completed ? "line-through" : ""}`}>
                     {task.title}
                   </p>
+                  {task.visibility === "personal" && (
+                    <span className="text-xs bg-gray-100 text-gray-500 border border-gray-200 rounded-full px-2 py-0.5">👤 個人</span>
+                  )}
                   {task.recurrence !== "none" && (
                     <span className={`text-xs border rounded-full px-2 py-0.5 whitespace-nowrap ${C.badge}`}>
                       🔄 {recurrenceLabels[task.recurrence]}
@@ -543,7 +605,17 @@ export default function Home() {
                   {task.remind_at && <span>リマインド：{formatDateTime(task.remind_at)}</span>}
                 </div>
               </div>
-              <button onClick={() => deleteTask(task.id)} className="text-gray-400 hover:text-red-500 text-lg leading-none transition-colors">×</button>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                {canEdit && (
+                  <button onClick={() => startEdit(task)}
+                    className="text-gray-400 hover:text-blue-500 text-sm transition-colors px-1">
+                    ✏️
+                  </button>
+                )}
+                {canEdit && (
+                  <button onClick={() => deleteTask(task.id)} className="text-gray-400 hover:text-red-500 text-lg leading-none transition-colors">×</button>
+                )}
+              </div>
             </div>
           );
         })}
@@ -557,21 +629,27 @@ export default function Home() {
               <h2 className="text-base font-bold text-gray-800">テンプレートから作成</h2>
               <button onClick={() => setShowTemplateModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
             </div>
-            <div className="space-y-2">
-              {templates.map((t) => (
-                <button key={t.id} onClick={() => applyTemplate(t)}
-                  className="w-full text-left border rounded-xl px-4 py-3 transition-colors hover:bg-[var(--primary-light)] hover:border-[var(--primary-border)] border-gray-200">
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="text-sm font-semibold text-gray-800">{t.name}</p>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${t.isPublic ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
-                      {t.isPublic ? "チーム共有" : "個人用"}
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-500 truncate">{t.title}</p>
-                  <p className={`text-xs mt-0.5 ${C.summaryDim}`}>期日：起票日から {t.relativeDueDays} 日後</p>
-                </button>
-              ))}
-            </div>
+            {templates.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-4">
+                テンプレートがありません。<br />管理者が管理画面から作成できます。
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {templates.map((t) => (
+                  <button key={t.id} onClick={() => applyTemplate(t)}
+                    className="w-full text-left border rounded-xl px-4 py-3 transition-colors hover:bg-[var(--primary-light)] hover:border-[var(--primary-border)] border-gray-200">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-sm font-semibold text-gray-800">{t.name}</p>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${t.visibility === "team" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                        {t.visibility === "team" ? "👥 チーム" : "👤 個人"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 truncate">{t.title}</p>
+                    <p className={`text-xs mt-0.5 ${C.summaryDim}`}>期日：起票日から {t.relative_due_days} 日後</p>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
