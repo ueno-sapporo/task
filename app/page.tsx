@@ -25,6 +25,8 @@ type Profile = {
   display_name: string | null;
   color: string;
   alert_email: string | null;
+  status: "pending" | "approved" | "rejected";
+  is_admin: boolean;
 };
 
 type Template = {
@@ -172,7 +174,7 @@ export default function Home() {
       // トリガーが失敗した場合の保険
       const color = getColorForId(userId);
       await supabase.from("profiles").insert({ id: userId, color });
-      setProfile({ id: userId, display_name: null, color, alert_email: null });
+      setProfile({ id: userId, display_name: null, color, alert_email: null, status: "pending", is_admin: false });
     }
   }, []);
 
@@ -267,6 +269,38 @@ export default function Home() {
     );
   }
 
+  // ===== 承認待ち =====
+  if (profile?.status === "pending") {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="bg-white rounded-2xl shadow-lg w-full max-w-sm p-8 text-center">
+          <div className="text-5xl mb-4">⏳</div>
+          <h2 className="text-lg font-bold text-gray-800 mb-2">承認待ちです</h2>
+          <p className="text-sm text-gray-500 mb-6">管理者があなたのアカウントを確認中です。<br />承認されるまでしばらくお待ちください。</p>
+          <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-600 underline">
+            ログアウト
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ===== 却下済み =====
+  if (profile?.status === "rejected") {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="bg-white rounded-2xl shadow-lg w-full max-w-sm p-8 text-center">
+          <div className="text-5xl mb-4">🚫</div>
+          <h2 className="text-lg font-bold text-gray-800 mb-2">アクセスが承認されませんでした</h2>
+          <p className="text-sm text-gray-500 mb-6">管理者にお問い合わせください。</p>
+          <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-600 underline">
+            ログアウト
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ===== 集計 =====
   const overdueTasks = tasks.filter((t) => isOverdue(t.due_date, t.completed));
   const filteredTasks = filterByViewMode(tasks, viewMode);
@@ -308,6 +342,9 @@ export default function Home() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-gray-800">タスク管理</h1>
         <div className="flex items-center gap-3">
+          {profile?.is_admin && (
+            <Link href="/admin" className="text-sm text-red-500 hover:underline">管理</Link>
+          )}
           <Link href="/settings" className={`text-sm ${C.link}`}>設定</Link>
           <div className="flex items-center gap-2">
             <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold"
