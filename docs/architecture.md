@@ -11,6 +11,8 @@
 | 認証 | Supabase Auth | ログイン機能を数行で実装できる |
 | 公開 | Vercel | GitHubにpushするだけで自動デプロイ |
 | バージョン管理 | Git / GitHub | コード履歴の管理とクラウド保存 |
+| メール送信 | Resend | APIキー1つでメール送信できる無料サービス |
+| 定期実行 | Vercel Cron Jobs | 毎時など定期的にAPIを自動で呼び出す仕組み |
 
 
 ## ディレクトリ構成
@@ -31,7 +33,8 @@ task-app/
 │   └── page.tsx                   # タスク一覧画面
 ├── lib/
 │   └── supabase.ts                # Supabaseクライアント
-└── .env.local                     # 環境変数（Supabaseの接続情報）
+├── .env.local                     # 環境変数（Supabaseの接続情報・Resend APIキー）
+└── vercel.json                    # Vercel Cron Jobs の設定
 ```
 
 
@@ -42,4 +45,5 @@ task-app/
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://xxxxxxxxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=xxxxxxxxxx
+RESEND_API_KEY=xxxxxxxxxx
 ```

@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+
+  /* デフォルトテーマ: ブルー */
+  --primary:            #2563eb;
+  --primary-dark:       #1d4ed8;
+  --primary-light:      #eff6ff;
+  --primary-border:     #bfdbfe;
+  --primary-ring:       #93c5fd;
+  --primary-text:       #1d4ed8;
+  --primary-text-dark:  #1e3a8a;
+  --primary-text-muted: #60a5fa;
+  --primary-text-faint: #93c5fd;
+}
+
+html[data-theme="green"] {
+  --primary:            #16a34a;
+  --primary-dark:       #15803d;
+  --primary-light:      #f0fdf4;
+  --primary-border:     #bbf7d0;
+  --primary-ring:       #6ee7b7;
+  --primary-text:       #15803d;
+  --primary-text-dark:  #14532d;
+  --primary-text-muted: #34d399;
+  --primary-text-faint: #6ee7b7;
+}
+
+html[data-theme="purple"] {
+  --primary:            #9333ea;
+  --primary-dark:       #7e22ce;
+  --primary-light:      #faf5ff;
+  --primary-border:     #e9d5ff;
+  --primary-ring:       #c4b5fd;
+  --primary-text:       #7e22ce;
+  --primary-text-dark:  #581c87;
+  --primary-text-muted: #a78bfa;
+  --primary-text-faint: #c4b5fd;
+}
+
+html[data-theme="orange"] {
+  --primary:            #ea580c;
+  --primary-dark:       #c2410c;
+  --primary-light:      #fff7ed;
+  --primary-border:     #fed7aa;
+  --primary-ring:       #fdba74;
+  --primary-text:       #c2410c;
+  --primary-text-dark:  #9a3412;
+  --primary-text-muted: #fb923c;
+  --primary-text-faint: #fdba74;
+}
+
+html[data-theme="pink"] {
+  --primary:            #db2777;
+  --primary-dark:       #be185d;
+  --primary-light:      #fdf2f8;
+  --primary-border:     #fbcfe8;
+  --primary-ring:       #f9a8d4;
+  --primary-text:       #be185d;
+  --primary-text-dark:  #9d174d;
+  --primary-text-muted: #f472b6;
+  --primary-text-faint: #f9a8d4;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
