@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
@@ -28,6 +28,7 @@ type Profile = {
   alert_email: string | null;
   status: "pending" | "approved" | "rejected";
   is_admin: boolean;
+  team: string | null;
 };
 
 type Template = {
@@ -101,103 +102,119 @@ export default function Home() {
   const [profile, setProfile]     = useState<Profile | null>(null);
   const [isAdmin, setIsAdmin]     = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const teamRef = useRef<string | null>(null);
 
   const [tasks, setTasks]         = useState<Task[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
 
-  const [isFormOpen, setIsFormOpen]     = useState(false);
+  const [isFormOpen, setIsFormOpen]       = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [title, setTitle]               = useState("");
-  const [detail, setDetail]             = useState("");
-  const [dueDate, setDueDate]           = useState("");
-  const [remindAt, setRemindAt]         = useState("");
-  const [recurrence, setRecurrence]     = useState<Task["recurrence"]>("none");
-  const [visibility, setVisibility]     = useState<"personal" | "team">("team");
+  const [title, setTitle]                 = useState("");
+  const [detail, setDetail]               = useState("");
+  const [dueDate, setDueDate]             = useState("");
+  const [remindAt, setRemindAt]           = useState("");
+  const [recurrence, setRecurrence]       = useState<Task["recurrence"]>("none");
+  const [visibility, setVisibility]       = useState<"personal" | "team">("team");
 
   const [viewMode, setViewMode]               = useState<ViewMode>("week");
   const [isAllUsersView, setIsAllUsersView]   = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showSummary, setShowSummary]         = useState(false);
 
-  // ===== Supabaseからタスクを取得 =====
-  const loadTasks = useCallback(async (showAll: boolean, userId: string) => {
-    let query = supabase.from("tasks").select("*").order("created_at", { ascending: false });
-    if (showAll) {
-      // 全体表示：チームタスク＋自分の個人タスク
-      query = query.or(`visibility.eq.team,user_id.eq.${userId}`);
+  // ===== タスク取得（チームフィルタ対応） =====
+  const loadTasks = useCallback(async (showAll: boolean, userId: string, team?: string | null) => {
+    let allTasks: any[] = [];
+
+    if (showAll && team) {
+      // 同じチームのメンバーIDを取得
+      const { data: members } = await supabase.from("profiles").select("id").eq("team", team);
+      const memberIds = members?.map((m: any) => m.id) ?? [];
+      if (!memberIds.includes(userId)) memberIds.push(userId);
+
+      // チームタスク（同チームメンバーの team 公開タスク）
+      const { data: teamTasks } = await supabase.from("tasks")
+        .select("*").in("user_id", memberIds).eq("visibility", "team")
+        .order("created_at", { ascending: false });
+
+      // 自分の個人タスク
+      const { data: personalTasks } = await supabase.from("tasks")
+        .select("*").eq("user_id", userId).eq("visibility", "personal")
+        .order("created_at", { ascending: false });
+
+      allTasks = [...(teamTasks ?? []), ...(personalTasks ?? [])];
+      allTasks.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     } else {
-      query = query.eq("user_id", userId);
+      // 個人ビュー or チーム未設定：自分のタスクのみ
+      const { data } = await supabase.from("tasks").select("*")
+        .eq("user_id", userId).order("created_at", { ascending: false });
+      allTasks = data ?? [];
     }
 
-    const { data: tasksData } = await query;
-    if (!tasksData) return;
+    if (allTasks.length === 0) { setTasks([]); return; }
 
-    const ids = Array.from(new Set(tasksData.map((t) => t.user_id)));
+    const ids = Array.from(new Set(allTasks.map((t: any) => t.user_id)));
     const { data: profilesData } = await supabase
       .from("profiles").select("id, display_name, color").in("id", ids);
 
     const profilesMap: Record<string, { name: string; color: string }> = {};
-    profilesData?.forEach((p) => {
-      profilesMap[p.id] = {
-        name:  p.display_name ?? "名前未設定",
-        color: p.color ?? getColorForId(p.id),
-      };
+    (profilesData ?? []).forEach((p: any) => {
+      profilesMap[p.id] = { name: p.display_name ?? "名前未設定", color: p.color ?? getColorForId(p.id) };
     });
 
-    setTasks(
-      tasksData.map((t) => ({
-        id:         t.id,
-        title:      t.title,
-        detail:     t.detail ?? "",
-        completed:  t.completed,
-        due_date:   t.due_date ?? "",
-        remind_at:  t.remind_at ?? "",
-        recurrence: t.recurrence ?? "none",
-        visibility: (t.visibility ?? "team") as "personal" | "team",
-        userId:     t.user_id,
-        userName:   profilesMap[t.user_id]?.name  ?? "名前未設定",
-        userColor:  profilesMap[t.user_id]?.color ?? getColorForId(t.user_id),
-      }))
-    );
+    setTasks(allTasks.map((t: any) => ({
+      id: t.id, title: t.title, detail: t.detail ?? "",
+      completed: t.completed, due_date: t.due_date ?? "", remind_at: t.remind_at ?? "",
+      recurrence: (t.recurrence ?? "none") as Task["recurrence"],
+      visibility: (t.visibility ?? "team") as "personal" | "team",
+      userId: t.user_id,
+      userName: profilesMap[t.user_id]?.name ?? "名前未設定",
+      userColor: profilesMap[t.user_id]?.color ?? getColorForId(t.user_id),
+    })));
   }, []);
 
-  // ===== Supabaseからテンプレートを取得 =====
+  // ===== テンプレート取得 =====
   const loadTemplates = useCallback(async () => {
-    const { data } = await supabase
-      .from("templates").select("*").order("created_at", { ascending: true });
+    const { data } = await supabase.from("templates").select("*").order("created_at", { ascending: true });
     setTemplates(data ?? []);
   }, []);
 
-  // ===== Supabaseからプロフィールを取得・作成 =====
-  const loadProfile = useCallback(async (userId: string) => {
+  // ===== プロフィール取得・作成 =====
+  const loadProfile = useCallback(async (userId: string): Promise<Profile | null> => {
     const { data } = await supabase.from("profiles").select("*").eq("id", userId).single();
 
     if (data) {
       if (data.is_admin) setIsAdmin(true);
+      const color = (!data.color || data.color === "#3b82f6") ? getColorForId(userId) : data.color;
       if (!data.color || data.color === "#3b82f6") {
-        const color = getColorForId(userId);
         await supabase.from("profiles").update({ color }).eq("id", userId);
-        setProfile({ ...data, color });
-      } else {
-        setProfile(data);
       }
+      const prof: Profile = { ...data, color };
+      setProfile(prof);
+      teamRef.current = prof.team ?? null;
+      return prof;
     } else {
       const color = getColorForId(userId);
       await supabase.from("profiles").insert({ id: userId, color });
-      setProfile({ id: userId, display_name: null, color, alert_email: null, status: "pending", is_admin: false });
+      const prof: Profile = { id: userId, display_name: null, color, alert_email: null, status: "pending", is_admin: false, team: null };
+      setProfile(prof);
+      teamRef.current = null;
+      return prof;
     }
   }, []);
 
   // ===== 認証チェック =====
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) { router.replace("/auth"); return; }
       setAuthUser(session.user);
-      Promise.all([
+
+      const [prof] = await Promise.all([
         loadProfile(session.user.id),
-        loadTasks(false, session.user.id),
         loadTemplates(),
-      ]).finally(() => setIsLoading(false));
+      ]);
+
+      await loadTasks(false, session.user.id, prof?.team ?? null);
+      setIsLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
@@ -208,7 +225,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!authUser) return;
-    loadTasks(isAllUsersView, authUser.id);
+    loadTasks(isAllUsersView, authUser.id, teamRef.current);
   }, [isAllUsersView, authUser, loadTasks]);
 
   // ===== フォームリセット =====
@@ -222,14 +239,11 @@ export default function Home() {
   async function addTask() {
     if (!title.trim() || !dueDate || !authUser) return;
 
-    const { data, error } = await supabase
-      .from("tasks")
-      .insert({
-        user_id: authUser.id, title: title.trim(), detail: detail.trim(),
-        completed: false, due_date: dueDate || null, remind_at: remindAt || null,
-        recurrence, visibility,
-      })
-      .select().single();
+    const { data, error } = await supabase.from("tasks").insert({
+      user_id: authUser.id, title: title.trim(), detail: detail.trim(),
+      completed: false, due_date: dueDate || null, remind_at: remindAt || null,
+      recurrence, visibility,
+    }).select().single();
 
     if (!error && data) {
       setTasks([{
@@ -308,21 +322,19 @@ export default function Home() {
     );
   }
 
-  // ===== 承認待ち =====
   if (profile?.status === "pending") {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
         <div className="bg-white rounded-2xl shadow-lg w-full max-w-sm p-8 text-center">
           <div className="text-5xl mb-4">⏳</div>
           <h2 className="text-lg font-bold text-gray-800 mb-2">承認待ちです</h2>
-          <p className="text-sm text-gray-500 mb-6">管理者があなたのアカウントを確認中です。<br />承認されるまでしばらくお待ちください。</p>
+          <p className="text-sm text-gray-500 mb-6">管理者があなたのアカウントを確認中です。</p>
           <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-600 underline">ログアウト</button>
         </div>
       </div>
     );
   }
 
-  // ===== 却下済み =====
   if (profile?.status === "rejected") {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
@@ -339,7 +351,6 @@ export default function Home() {
   // ===== 集計 =====
   const overdueTasks = tasks.filter((t) => isOverdue(t.due_date, t.completed));
   const filteredTasks = filterByViewMode(tasks, viewMode);
-
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const todayEnd   = new Date(todayStart); todayEnd.setDate(todayStart.getDate() + 1);
@@ -375,11 +386,14 @@ export default function Home() {
 
       {/* ヘッダー */}
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold text-gray-800">タスク管理</h1>
-        <div className="flex items-center gap-3">
-          {isAdmin && (
-            <Link href="/admin" className="text-sm text-red-500 hover:underline">管理</Link>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">タスク管理</h1>
+          {profile?.team && (
+            <span className="text-xs text-gray-400">チーム {profile.team}</span>
           )}
+        </div>
+        <div className="flex items-center gap-3">
+          {isAdmin && <Link href="/admin" className="text-sm text-red-500 hover:underline">管理</Link>}
           <Link href="/settings" className={`text-sm ${C.link}`}>設定</Link>
           <div className="flex items-center gap-2">
             <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold"
@@ -402,9 +416,16 @@ export default function Home() {
         </button>
         <button onClick={() => setIsAllUsersView(true)}
           className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-lg text-sm font-semibold transition-colors ${isAllUsersView ? C.tabActive : C.tabInactive}`}>
-          👥 全体表示
+          👥 {profile?.team ? `チーム${profile.team}` : "全体表示"}
         </button>
       </div>
+
+      {/* チーム未設定の案内 */}
+      {isAllUsersView && !profile?.team && (
+        <div className="bg-yellow-50 border border-yellow-200 text-yellow-700 rounded-lg px-4 py-2 mb-4 text-xs">
+          チームが未設定です。管理者に連絡してチームを割り当てもらってください。
+        </div>
+      )}
 
       {/* デイリーサマリー */}
       <div className={`border rounded-xl mb-4 ${C.summaryBg}`}>
@@ -485,9 +506,7 @@ export default function Home() {
                   📄 テンプレート
                 </button>
               )}
-              <button onClick={resetForm} className="text-xs text-gray-400 hover:text-gray-600">
-                キャンセル
-              </button>
+              <button onClick={resetForm} className="text-xs text-gray-400 hover:text-gray-600">キャンセル</button>
             </div>
           </div>
 
@@ -524,13 +543,13 @@ export default function Home() {
             </div>
             <div className="flex-1">
               <label className="text-xs text-gray-500 mb-1 block">🔒 公開範囲</label>
-              <div className="flex gap-1">
+              <div className="flex gap-1 h-[38px]">
                 <button type="button" onClick={() => setVisibility("team")}
-                  className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-colors ${visibility === "team" ? C.btn : "border-gray-300 text-gray-500 hover:bg-gray-50"}`}>
+                  className={`flex-1 rounded-lg text-xs font-semibold border transition-colors ${visibility === "team" ? C.btn : "border-gray-300 text-gray-500 hover:bg-gray-50"}`}>
                   👥 チーム
                 </button>
                 <button type="button" onClick={() => setVisibility("personal")}
-                  className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-colors ${visibility === "personal" ? "bg-gray-700 text-white border-gray-700" : "border-gray-300 text-gray-500 hover:bg-gray-50"}`}>
+                  className={`flex-1 rounded-lg text-xs font-semibold border transition-colors ${visibility === "personal" ? "bg-gray-700 text-white border-gray-700" : "border-gray-300 text-gray-500 hover:bg-gray-50"}`}>
                   👤 個人
                 </button>
               </div>
@@ -558,7 +577,7 @@ export default function Home() {
       <div className="space-y-3">
         {filteredTasks.length === 0 && (
           <p className="text-center text-gray-400 text-sm py-8">
-            {isAllUsersView ? "全体の" : ""}{viewMode === "today" ? "本日" : viewMode === "week" ? "今週" : "今月"}のタスクはありません
+            {viewMode === "today" ? "本日" : viewMode === "week" ? "今週" : "今月"}のタスクはありません
           </p>
         )}
         {filteredTasks.map((task) => {
@@ -605,17 +624,12 @@ export default function Home() {
                   {task.remind_at && <span>リマインド：{formatDateTime(task.remind_at)}</span>}
                 </div>
               </div>
-              <div className="flex items-center gap-1 flex-shrink-0">
-                {canEdit && (
-                  <button onClick={() => startEdit(task)}
-                    className="text-gray-400 hover:text-blue-500 text-sm transition-colors px-1">
-                    ✏️
-                  </button>
-                )}
-                {canEdit && (
+              {canEdit && (
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <button onClick={() => startEdit(task)} className="text-gray-400 hover:text-blue-500 text-sm transition-colors px-1">✏️</button>
                   <button onClick={() => deleteTask(task.id)} className="text-gray-400 hover:text-red-500 text-lg leading-none transition-colors">×</button>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -630,9 +644,7 @@ export default function Home() {
               <button onClick={() => setShowTemplateModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
             </div>
             {templates.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-4">
-                テンプレートがありません。<br />管理者が管理画面から作成できます。
-              </p>
+              <p className="text-sm text-gray-400 text-center py-4">テンプレートがありません。<br />管理者が管理画面から作成できます。</p>
             ) : (
               <div className="space-y-2">
                 {templates.map((t) => (

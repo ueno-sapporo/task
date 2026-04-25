@@ -11,6 +11,7 @@ type ProfileRow = {
   display_name: string | null;
   status: "pending" | "approved" | "rejected";
   is_admin: boolean;
+  team: string | null;
   created_at: string;
 };
 
@@ -30,16 +31,14 @@ export default function AdminPage() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState("");
-
-  // テンプレートフォーム
-  const [tmplName, setTmplName]       = useState("");
-  const [tmplTitle, setTmplTitle]     = useState("");
-  const [tmplDetail, setTmplDetail]   = useState("");
-  const [tmplDays, setTmplDays]       = useState(1);
-  const [tmplVisibility, setTmplVisibility] = useState<"personal" | "team">("team");
-  const [tmplSaving, setTmplSaving]   = useState(false);
-
   const [activeTab, setActiveTab] = useState<"users" | "templates">("users");
+
+  const [tmplName, setTmplName]         = useState("");
+  const [tmplTitle, setTmplTitle]       = useState("");
+  const [tmplDetail, setTmplDetail]     = useState("");
+  const [tmplDays, setTmplDays]         = useState(1);
+  const [tmplVisibility, setTmplVisibility] = useState<"personal" | "team">("team");
+  const [tmplSaving, setTmplSaving]     = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -47,7 +46,6 @@ export default function AdminPage() {
 
       const { data: me } = await supabase
         .from("profiles").select("is_admin").eq("id", session.user.id).single();
-
       if (!me?.is_admin) { router.replace("/"); return; }
 
       setCurrentUserId(session.user.id);
@@ -63,6 +61,7 @@ export default function AdminPage() {
     });
   }, [router]);
 
+  // ===== ユーザー操作 =====
   async function handleApprove(id: string) {
     await supabase.from("profiles").update({ status: "approved" }).eq("id", id);
     setProfiles((prev) => prev.map((p) => p.id === id ? { ...p, status: "approved" } : p));
@@ -73,17 +72,25 @@ export default function AdminPage() {
     setProfiles((prev) => prev.map((p) => p.id === id ? { ...p, status: "rejected" } : p));
   }
 
+  async function handleTeamChange(id: string, team: string | null) {
+    await supabase.from("profiles").update({ team }).eq("id", id);
+    setProfiles((prev) => prev.map((p) => p.id === id ? { ...p, team } : p));
+  }
+
+  async function handleAdminToggle(id: string, makeAdmin: boolean) {
+    await supabase.from("profiles").update({ is_admin: makeAdmin }).eq("id", id);
+    setProfiles((prev) => prev.map((p) => p.id === id ? { ...p, is_admin: makeAdmin } : p));
+  }
+
+  // ===== テンプレート操作 =====
   async function handleAddTemplate() {
     if (!tmplName.trim() || !tmplTitle.trim()) return;
     setTmplSaving(true);
 
     const { data, error } = await supabase.from("templates").insert({
       created_by: currentUserId,
-      name: tmplName.trim(),
-      title: tmplTitle.trim(),
-      detail: tmplDetail.trim(),
-      relative_due_days: tmplDays,
-      visibility: tmplVisibility,
+      name: tmplName.trim(), title: tmplTitle.trim(), detail: tmplDetail.trim(),
+      relative_due_days: tmplDays, visibility: tmplVisibility,
     }).select().single();
 
     if (!error && data) {
@@ -121,8 +128,7 @@ export default function AdminPage() {
       <div className="flex gap-2 mb-6">
         <button onClick={() => setActiveTab("users")}
           className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${activeTab === "users" ? "bg-gray-800 text-white" : "bg-white border border-gray-200 text-gray-500"}`}>
-          👤 ユーザー管理
-          {pending.length > 0 && <span className="ml-1 text-red-400">({pending.length})</span>}
+          👤 ユーザー管理 {pending.length > 0 && <span className="text-red-400">({pending.length})</span>}
         </button>
         <button onClick={() => setActiveTab("templates")}
           className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${activeTab === "templates" ? "bg-gray-800 text-white" : "bg-white border border-gray-200 text-gray-500"}`}>
@@ -130,7 +136,7 @@ export default function AdminPage() {
         </button>
       </div>
 
-      {/* ユーザー管理タブ */}
+      {/* ===== ユーザー管理 ===== */}
       {activeTab === "users" && (
         <>
           {/* 承認待ち */}
@@ -145,20 +151,22 @@ export default function AdminPage() {
             ) : (
               <div className="space-y-2">
                 {pending.map((p) => (
-                  <div key={p.id} className="bg-white rounded-xl border border-orange-200 p-4 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-gray-800 truncate">{p.email ?? "（メール未設定）"}</p>
-                      <p className="text-xs text-gray-400">{p.display_name ?? "表示名未設定"}</p>
-                    </div>
-                    <div className="flex gap-2 flex-shrink-0">
-                      <button onClick={() => handleApprove(p.id)}
-                        className="text-xs bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg font-semibold transition-colors">
-                        承認
-                      </button>
-                      <button onClick={() => handleReject(p.id)}
-                        className="text-xs bg-red-400 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg font-semibold transition-colors">
-                        却下
-                      </button>
+                  <div key={p.id} className="bg-white rounded-xl border border-orange-200 p-4">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 truncate">{p.email ?? "（メール未設定）"}</p>
+                        <p className="text-xs text-gray-400">{p.display_name ?? "表示名未設定"}</p>
+                      </div>
+                      <div className="flex gap-2 flex-shrink-0">
+                        <button onClick={() => handleApprove(p.id)}
+                          className="text-xs bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg font-semibold transition-colors">
+                          承認
+                        </button>
+                        <button onClick={() => handleReject(p.id)}
+                          className="text-xs bg-red-400 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg font-semibold transition-colors">
+                          却下
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -171,18 +179,50 @@ export default function AdminPage() {
             <h2 className="text-sm font-bold text-gray-700 mb-3">承認済み ({approved.length}件)</h2>
             <div className="space-y-2">
               {approved.map((p) => (
-                <div key={p.id} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-gray-800 truncate">
-                      {p.email ?? "（メール未設定）"}
-                      {p.is_admin && <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">管理者</span>}
-                    </p>
-                    <p className="text-xs text-gray-400">{p.display_name ?? "表示名未設定"}</p>
+                <div key={p.id} className="bg-white rounded-xl border border-gray-200 p-4">
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-800 truncate">
+                        {p.email ?? "（メール未設定）"}
+                        {p.is_admin && <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">管理者</span>}
+                      </p>
+                      <p className="text-xs text-gray-400">{p.display_name ?? "表示名未設定"}</p>
+                    </div>
+                    <button onClick={() => handleReject(p.id)}
+                      className="text-xs text-gray-400 hover:text-red-500 transition-colors flex-shrink-0">
+                      取消
+                    </button>
                   </div>
-                  <button onClick={() => handleReject(p.id)}
-                    className="text-xs text-gray-400 hover:text-red-500 transition-colors flex-shrink-0">
-                    取消
-                  </button>
+
+                  {/* チーム設定 */}
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-500 w-16 flex-shrink-0">チーム</span>
+                    <div className="flex gap-1">
+                      {["A", "B", "C"].map((team) => (
+                        <button key={team} onClick={() => handleTeamChange(p.id, p.team === team ? null : team)}
+                          className={`text-xs px-3 py-1 rounded-lg font-semibold border transition-colors ${p.team === team ? "bg-blue-500 text-white border-blue-500" : "border-gray-300 text-gray-500 hover:bg-gray-50"}`}>
+                          {team}
+                        </button>
+                      ))}
+                      {p.team && (
+                        <button onClick={() => handleTeamChange(p.id, null)}
+                          className="text-xs px-3 py-1 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 transition-colors">
+                          解除
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 管理者権限 */}
+                  {p.id !== currentUserId && (
+                    <div className="flex items-center gap-3 mt-2">
+                      <span className="text-xs text-gray-500 w-16 flex-shrink-0">権限</span>
+                      <button onClick={() => handleAdminToggle(p.id, !p.is_admin)}
+                        className={`text-xs px-3 py-1 rounded-lg font-semibold border transition-colors ${p.is_admin ? "bg-blue-100 text-blue-700 border-blue-300 hover:bg-red-50 hover:text-red-600 hover:border-red-300" : "border-gray-300 text-gray-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300"}`}>
+                        {p.is_admin ? "管理者 → 一般に変更" : "一般 → 管理者に変更"}
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -208,10 +248,9 @@ export default function AdminPage() {
         </>
       )}
 
-      {/* テンプレート管理タブ */}
+      {/* ===== テンプレート管理 ===== */}
       {activeTab === "templates" && (
         <>
-          {/* 新規作成フォーム */}
           <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
             <h2 className="text-sm font-bold text-gray-700 mb-4">新しいテンプレートを作成</h2>
             <div className="space-y-3">
@@ -230,7 +269,6 @@ export default function AdminPage() {
               <div>
                 <label className="text-xs text-gray-500 block mb-1">詳細・メモ（任意）</label>
                 <textarea value={tmplDetail} onChange={(e) => setTmplDetail(e.target.value)}
-                  placeholder="例：先週の業務をまとめて提出する"
                   rows={2} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-gray-400" />
               </div>
               <div className="flex gap-3">
@@ -241,13 +279,13 @@ export default function AdminPage() {
                 </div>
                 <div className="flex-1">
                   <label className="text-xs text-gray-500 block mb-1">公開範囲</label>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 h-[38px]">
                     <button type="button" onClick={() => setTmplVisibility("team")}
-                      className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-colors ${tmplVisibility === "team" ? "bg-gray-800 text-white border-gray-800" : "border-gray-300 text-gray-500"}`}>
+                      className={`flex-1 rounded-lg text-xs font-semibold border transition-colors ${tmplVisibility === "team" ? "bg-gray-800 text-white border-gray-800" : "border-gray-300 text-gray-500"}`}>
                       👥 チーム
                     </button>
                     <button type="button" onClick={() => setTmplVisibility("personal")}
-                      className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-colors ${tmplVisibility === "personal" ? "bg-gray-800 text-white border-gray-800" : "border-gray-300 text-gray-500"}`}>
+                      className={`flex-1 rounded-lg text-xs font-semibold border transition-colors ${tmplVisibility === "personal" ? "bg-gray-800 text-white border-gray-800" : "border-gray-300 text-gray-500"}`}>
                       👤 個人
                     </button>
                   </div>
@@ -260,7 +298,6 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* テンプレート一覧 */}
           <div>
             <h2 className="text-sm font-bold text-gray-700 mb-3">テンプレート一覧 ({templates.length}件)</h2>
             {templates.length === 0 ? (
