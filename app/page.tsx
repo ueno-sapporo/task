@@ -128,7 +128,7 @@ export default function Home() {
     if (!tasksData) return;
 
     // タスクに関わるユーザーのプロフィールをまとめて取得
-    const ids = [...new Set(tasksData.map((t) => t.user_id))];
+    const ids = Array.from(new Set(tasksData.map((t) => t.user_id)));
     const { data: profilesData } = await supabase
       .from("profiles").select("id, display_name, color").in("id", ids);
 
