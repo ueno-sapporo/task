@@ -123,12 +123,13 @@ export default function Home() {
 
   // ===== タスク取得（チームフィルタ対応） =====
   const loadTasks = useCallback(async (showAll: boolean, userId: string, team?: string | null) => {
-    let allTasks: any[] = [];
+    type RawTask = Record<string, unknown>;
+    let allTasks: RawTask[] = [];
 
     if (showAll && team) {
       // 同じチームのメンバーIDを取得
       const { data: members } = await supabase.from("profiles").select("id").eq("team", team);
-      const memberIds = members?.map((m: any) => m.id) ?? [];
+      const memberIds: string[] = members?.map((m: { id: string }) => m.id) ?? [];
       if (!memberIds.includes(userId)) memberIds.push(userId);
 
       // チームタスク（同チームメンバーの team 公開タスク）
@@ -141,27 +142,27 @@ export default function Home() {
         .select("*").eq("user_id", userId).eq("visibility", "personal")
         .order("created_at", { ascending: false });
 
-      allTasks = [...(teamTasks ?? []), ...(personalTasks ?? [])];
-      allTasks.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      allTasks = [...(teamTasks ?? []), ...(personalTasks ?? [])] as RawTask[];
+      allTasks.sort((a, b) => new Date(b.created_at as string).getTime() - new Date(a.created_at as string).getTime());
     } else {
       // 個人ビュー or チーム未設定：自分のタスクのみ
       const { data } = await supabase.from("tasks").select("*")
         .eq("user_id", userId).order("created_at", { ascending: false });
-      allTasks = data ?? [];
+      allTasks = (data ?? []) as RawTask[];
     }
 
     if (allTasks.length === 0) { setTasks([]); return; }
 
-    const ids = Array.from(new Set(allTasks.map((t: any) => t.user_id)));
+    const ids = Array.from(new Set(allTasks.map((t) => t.user_id as string)));
     const { data: profilesData } = await supabase
       .from("profiles").select("id, display_name, color").in("id", ids);
 
     const profilesMap: Record<string, { name: string; color: string }> = {};
-    (profilesData ?? []).forEach((p: any) => {
+    (profilesData ?? []).forEach((p: { id: string; display_name: string | null; color: string | null }) => {
       profilesMap[p.id] = { name: p.display_name ?? "名前未設定", color: p.color ?? getColorForId(p.id) };
     });
 
-    setTasks(allTasks.map((t: any) => ({
+    setTasks(allTasks.map((t) => ({
       id: t.id, title: t.title, detail: t.detail ?? "",
       completed: t.completed, due_date: t.due_date ?? "", remind_at: t.remind_at ?? "",
       recurrence: (t.recurrence ?? "none") as Task["recurrence"],
